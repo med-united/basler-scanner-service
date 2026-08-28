@@ -27,13 +27,23 @@ $ErrorActionPreference = "Stop"
 $source = "https://raw.githubusercontent.com/med-united/basler-scanner-service/main/scanner.py"
 
 # 1. uv runs the service and fetches the Python version pinned in scanner.py.
+#    Its installer ends in "catch { exit 1 }", which would terminate this whole
+#    session if we ran it inline, so give it a process of its own.
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     Write-Host "Installing uv..."
-    Invoke-RestMethod https://astral.sh/uv/install.ps1 | Invoke-Expression
+    powershell -NoProfile -ExecutionPolicy Bypass `
+               -Command "irm https://astral.sh/uv/install.ps1 | iex"
+    if ($LASTEXITCODE -ne 0) {
+        throw "uv installation failed with exit code $LASTEXITCODE."
+    }
     # The installer only updates PATH for new shells; make uv usable right now.
     $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
 }
-$uv = (Get-Command uv).Source
+$uvCommand = Get-Command uv -ErrorAction SilentlyContinue
+if (-not $uvCommand) {
+    throw "uv is still not on PATH after installing. Open a new PowerShell window and run this script again."
+}
+$uv = $uvCommand.Source
 Write-Host "uv: $uv" -ForegroundColor Green
 
 # 2. The service is a single file, so there is nothing else to fetch.
