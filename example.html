@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Basler Scanner Demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; }
+    h1 { font-size: 1.3rem; }
+    img { max-width: 100%; border: 1px solid #ccc; display: block; }
+    .row { display: flex; gap: 1rem; align-items: center; margin: 1rem 0; }
+    .columns { display: flex; gap: 1.5rem; align-items: flex-start; }
+    .columns > div { flex: 1; min-width: 0; }
+    button { padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer; }
+    #status { color: #666; }
+    #captureImg:not([src]) { display: none; }
+  </style>
+</head>
+<body>
+  <h1>Basler Scanner Demo</h1>
+
+  <div class="row">
+    <button id="captureBtn">Capture full-resolution</button>
+    <span id="status"></span>
+  </div>
+
+  <div class="columns">
+    <div>
+      <h2>Live preview</h2>
+      <img id="previewImg" alt="Live preview">
+    </div>
+    <div>
+      <h2>Last capture</h2>
+      <img id="captureImg" alt="Last capture">
+    </div>
+  </div>
+
+  <script>
+    const BASE = "http://127.0.0.1:8000";
+    const status = document.getElementById("status");
+    const captureImg = document.getElementById("captureImg");
+    const previewImg = document.getElementById("previewImg");
+
+    async function pollPreview() {
+      try {
+        const res = await fetch(BASE + "/preview.jpg");
+        if (res.ok) {
+          const blob = await res.blob();
+          if (previewImg.src) URL.revokeObjectURL(previewImg.src);
+          previewImg.src = URL.createObjectURL(blob);
+        }
+      } catch {
+        // server unreachable — just try again on the next tick
+      }
+      setTimeout(pollPreview, 50);
+    }
+    pollPreview();
+
+    document.getElementById("captureBtn").addEventListener("click", async () => {
+      status.textContent = "capturing…";
+      try {
+        const res = await fetch(BASE + "/capture");
+        if (!res.ok) throw new Error(await res.text());
+        const blob = await res.blob();
+        if (captureImg.src) URL.revokeObjectURL(captureImg.src);
+        captureImg.src = URL.createObjectURL(blob);
+        status.textContent = "capture ok (" + Math.round(blob.size / 1024) + " KB)";
+      } catch (err) {
+        status.textContent = "capture failed: " + err.message;
+      }
+    });
+  </script>
+</body>
+</html>
