@@ -54,7 +54,7 @@
 
 <h1>Scan Document</h1>
 <p>
-    Live preview from the Basler scanner service at <code>http://127.0.0.1:8000</code>.
+    Live preview from the Basler scanner service at <code>http://127.0.0.1:41234</code>.
     Capture an image to check it, then upload: the scanner service converts the capture to
     PDF/A-2b (<code>GET /capture.pdf</code>, required by the ePA for <code>application/pdf</code>)
     and it is uploaded using the PoPP token, KVNR, filename and title from the upload form.
@@ -390,7 +390,7 @@
         }
     });
 
-    const CAMERA_BASE = 'http://127.0.0.1:8000';
+    const CAMERA_BASE = 'http://127.0.0.1:41234';
     const scanStatus = document.getElementById('scanStatus');
     const previewImg = document.getElementById('previewImg');
     const captureImg = document.getElementById('captureImg');

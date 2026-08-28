@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.12"
+# requires-python = "==3.13.*"
 # dependencies = [
 #     "pypylon",
 #     "fastapi",
@@ -9,16 +9,6 @@
 #     "pikepdf",
 # ]
 # ///
-"""Basler scanner service — single file, run with: uv run scanner.py <port>
-
-GET /preview.jpg  - one downscaled preview frame (poll it for a live view)
-GET /capture      - one full-resolution JPEG
-GET /capture.pdf  - one full-resolution capture as PDF/A-2b
-
-All camera settings (ROI, exposure, gain, frame rate, ...) come from the
-user set stored in the camera (pylon Viewer -> User Set Control).
-"""
-
 import io
 import os
 import threading
@@ -31,6 +21,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pypylon import pylon
+
+DEFAULT_PORT = 41234
 
 _lock = threading.Lock()
 _frame = None  # latest full-resolution BGR frame
@@ -135,6 +127,7 @@ if __name__ == "__main__":
 
     import uvicorn
 
-    if len(sys.argv) != 2:
-        sys.exit("usage: uv run scanner.py <port>")
-    uvicorn.run(app, host="127.0.0.1", port=int(sys.argv[1]), access_log=False)
+    if len(sys.argv) > 2:
+        sys.exit(f"usage: uv run scanner.py [port]  (default {DEFAULT_PORT})")
+    port = int(sys.argv[1]) if len(sys.argv) == 2 else DEFAULT_PORT
+    uvicorn.run(app, host="127.0.0.1", port=port, access_log=False)
