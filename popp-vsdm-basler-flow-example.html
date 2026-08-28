@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>PoPP Token Upload Example</title>
+    <script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7/bundles/stomp.umd.min.js"></script>
+    <style>
+        body { font-family: sans-serif; max-width: 1500px; margin: 2rem auto; padding: 0 1rem; }
+        .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 2.5rem; align-items: start; }
+        @media (max-width: 1000px) { .layout { grid-template-columns: 1fr; } }
+        label { display: block; margin-top: 1rem; font-weight: bold; }
+        input, textarea { width: 100%; box-sizing: border-box; padding: 0.4rem; margin-top: 0.25rem; }
+        textarea { font-family: monospace; font-size: 0.8rem; }
+        button { margin-top: 1.5rem; padding: 0.5rem 1.5rem; }
+        .result { margin-top: 1.5rem; padding: 0.75rem; white-space: pre-wrap; word-break: break-all; display: none; }
+        .result.ok { display: block; background: #e6f4e6; border: 1px solid #4a4; }
+        .result.error { display: block; background: #fae6e6; border: 1px solid #a44; }
+        #queryResult, #taskResult { margin-top: 1.5rem; padding: 0.75rem; white-space: pre-wrap; word-break: break-all; display: none; background: #f4f4f4; border: 1px solid #999; max-height: 30rem; overflow: auto; }
+        hr { margin: 2.5rem 0; }
+        .columns { display: flex; gap: 1.5rem; align-items: flex-start; }
+        .columns > div { flex: 1; min-width: 0; }
+        .columns img { max-width: 100%; border: 1px solid #ccc; display: block; }
+        #captureImg:not([src]) { display: none; }
+        #scanStatus { color: #666; margin-left: 1rem; }
+        #poppStatus { margin-left: 1rem; color: #666; }
+        .msg { border: 1px solid #ccc; border-radius: 6px; padding: 1rem; margin-top: 1rem; }
+        #queryDocs .msg { word-break: break-all; }
+        .token { word-break: break-all; white-space: pre-wrap; font-family: monospace; background: #f5f5f5; padding: 0.5rem; margin: 0.5rem 0 0; }
+    </style>
+</head>
+<body>
+<div class="layout">
+<div>
+
+<h1>PoPP &amp; VSDM Demo</h1>
+<p>Live message stream from the popp-client websocket (CETP events, ReadVSDResponse, PoPP tokens).</p>
+
+<label for="poppClientUrl">popp-client URL</label>
+<input type="text" id="poppClientUrl" placeholder="ws://localhost:8081/popp-events">
+
+<label for="topic">Topic (/topic/popp-token/&lt;card-terminal-id&gt;)</label>
+<input type="text" id="topic" placeholder="/topic/popp-token/00:1B:B5:0E:8D:98">
+
+<div>
+    <button type="button" id="connect">Subscribe</button>
+    <button type="button" id="download" disabled>Download flow</button>
+    <span id="poppStatus">disconnected</span>
+</div>
+
+<div id="messages"></div>
+
+</div>
+<div>
+
+<h1>Scan Document</h1>
+<p>
+    Live preview from the Basler scanner service at <code>http://127.0.0.1:8000</code>.
+    Capture an image to check it, then upload: the scanner service converts the capture to
+    PDF/A-2b (<code>GET /capture.pdf</code>, required by the ePA for <code>application/pdf</code>)
+    and it is uploaded using the PoPP token, KVNR, filename and title from the upload form.
+</p>
+
+<div>
+    <button type="button" id="captureBtn">Capture full-resolution</button>
+    <button type="button" id="scanUploadBtn" disabled>Create PDF &amp; upload</button>
+    <span id="scanStatus"></span>
+</div>
+
+<div class="columns">
+    <div>
+        <h2>Live preview</h2>
+        <img id="previewImg" alt="Live preview">
+    </div>
+    <div>
+        <h2>Last capture</h2>
+        <img id="captureImg" alt="Last capture">
+    </div>
+</div>
+
+<div id="scanResult" class="result"></div>
+
+<hr>
+
+<h1>Document Upload with PoPP Token</h1>
+<p>
+    Demonstrates <code>POST /xds-document/upload</code> with the PoPP validation filter enabled
+    (<code>POPP_AUTHORIZATION_FILTER_ENABLED=true</code>). The filter parses the PoPP token (JWT)
+    and rejects the request with 401 unless its <code>patientId</code> claim matches the
+    <code>kvnr</code> query parameter.
+</p>
+
+<form id="uploadForm">
+    <label for="serverUrl">Server URL</label>
+    <input type="text" id="serverUrl" required placeholder="http://localhost:8090">
+
+    <label for="poppToken">PoPP Token (JWT)</label>
+    <textarea id="poppToken" rows="6" required placeholder="eyJraWQiOi..."></textarea>
+
+    <label for="kvnr">KVNR</label>
+    <input type="text" id="kvnr" required placeholder="X110624006">
+
+    <label for="fileName">Filename</label>
+    <input type="text" id="fileName" required placeholder="medical-report.pdf">
+
+    <label for="title">Title</label>
+    <input type="text" id="title" required placeholder="PDF-Arztbrief">
+
+    <label for="file">Document</label>
+    <input type="file" id="file" required>
+
+    <button type="submit">Upload</button>
+</form>
+
+<div id="result" class="result"></div>
+
+<hr>
+
+<h1>Upload Task Status</h1>
+<p>
+    The upload runs asynchronously — the task ID returned above only means the request was accepted.
+    <code>GET /xds-document/task/{taskId}</code> returns the actual result as a
+    <code>RegistryResponseType</code> (Success, InProgress or Failure with the error message).
+    Note: a completed result is removed from the server after it has been fetched once.
+</p>
+<form id="taskForm">
+    <label for="taskId">Task ID</label>
+    <input type="text" id="taskId" required placeholder="550e8400-e29b-41d4-a716-446655440000">
+
+    <button type="submit">Check status</button>
+</form>
+<pre id="taskResult"></pre>
+
+<hr>
+
+<h1>Download Document</h1>
+<p>
+    Uses the Server URL, PoPP token and KVNR from the form above. First query the XDS registry
+    for the patient's documents, then download a single document by its
+    <code>XDSDocumentEntry.uniqueId</code> from the query response.
+</p>
+
+<h2>1. Query documents</h2>
+<p><code>GET /xds-document/query</code> — shows the raw <code>AdhocQueryResponse</code> XML.</p>
+<button type="button" id="queryButton">Query</button>
+<pre id="queryResult"></pre>
+<div id="queryDocs"></div>
+
+<h2>2. Download document</h2>
+<p><code>GET /xds-document/download/{uniqueId}</code> — saves the document contained in the response.</p>
+<form id="downloadForm">
+    <label for="uniqueId">Document uniqueId</label>
+    <input type="text" id="uniqueId" required placeholder="2.259532960832105435533.4853516939077959994">
+
+    <label for="saveFileName">Save as</label>
+    <input type="text" id="saveFileName" required placeholder="medical-report.pdf">
+
+    <button type="submit">Download</button>
+</form>
+
+<div id="downloadResult" class="result"></div>
+
+<hr>
+
+<h1>Delete Document</h1>
+<p>
+    Uses the Server URL, PoPP token and KVNR from the form above.
+    <code>POST /xds-document/delete/raw</code> — sends a <code>RemoveObjectsRequest</code> for the
+    given entryUUID. Note: this is the <code>id</code> attribute of the <code>ExtrinsicObject</code>
+    in the query response (<code>urn:uuid:...</code>), not the uniqueId used for download.
+    The delete runs asynchronously — check the returned task ID in the Upload Task Status section.
+</p>
+<form id="deleteForm">
+    <label for="entryUuid">Document entryUUID</label>
+    <input type="text" id="entryUuid" required placeholder="urn:uuid:1e418088-3fc5-41b4-bb51-b498e599fc9d">
+
+    <button type="submit">Delete</button>
+</form>
+
+<div id="deleteResult" class="result"></div>
+
+</div>
+</div>
+
+<script>
+    document.getElementById('uploadForm').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const result = document.getElementById('result');
+        result.className = 'result';
+        result.textContent = 'Uploading...';
+        result.style.display = 'block';
+
+        const serverUrl = document.getElementById('serverUrl').value.trim().replace(/\/$/, '');
+        const file = document.getElementById('file').files[0];
+        const kvnr = document.getElementById('kvnr').value.trim();
+
+        try {
+            const response = await fetch(serverUrl + '/xds-document/upload?kvnr=' + encodeURIComponent(kvnr), {
+                method: 'POST',
+                headers: {
+                    'popp': document.getElementById('poppToken').value.trim(),
+                    'Content-Type': file.type || 'application/octet-stream',
+                    'Lang-Code': 'de-DE',
+                    'File-Name': document.getElementById('fileName').value.trim(),
+                    'Title': document.getElementById('title').value.trim()
+                },
+                body: file
+            });
+            const text = await response.text();
+            if (response.ok) {
+                result.className = 'result ok';
+                result.textContent = 'Upload accepted. Task ID: ' + text;
+            } else {
+                result.className = 'result error';
+                result.textContent = 'HTTP ' + response.status + ' ' + response.statusText + '\n' + text;
+            }
+        } catch (e) {
+            result.className = 'result error';
+            result.textContent = String(e);
+        }
+    });
+
+    function getServerUrl() {
+        return document.getElementById('serverUrl').value.trim().replace(/\/$/, '');
+    }
+
+    function getPoppHeader() {
+        return { 'popp': document.getElementById('poppToken').value.trim() };
+    }
+
+    function getKvnr() {
+        return encodeURIComponent(document.getElementById('kvnr').value.trim());
+    }
+
+    document.getElementById('taskForm').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const taskResult = document.getElementById('taskResult');
+        taskResult.style.display = 'block';
+        taskResult.textContent = 'Checking...';
+        const taskId = document.getElementById('taskId').value.trim();
+        try {
+            const response = await fetch(getServerUrl() + '/xds-document/task/' + encodeURIComponent(taskId), {
+                headers: getPoppHeader()
+            });
+            const text = await response.text();
+            taskResult.textContent = response.ok
+                ? text
+                : 'HTTP ' + response.status + ' ' + response.statusText + '\n' + text;
+        } catch (e) {
+            taskResult.textContent = String(e);
+        }
+    });
+
+    document.getElementById('queryButton').addEventListener('click', async () => {
+        const queryResult = document.getElementById('queryResult');
+        const queryDocs = document.getElementById('queryDocs');
+        queryResult.style.display = 'block';
+        queryResult.textContent = 'Querying...';
+        queryDocs.textContent = '';
+        try {
+            const response = await fetch(getServerUrl() + '/xds-document/query?kvnr=' + getKvnr(), {
+                headers: getPoppHeader()
+            });
+            const text = await response.text();
+            if (response.ok) {
+                queryResult.textContent = text;
+                renderQueryDocs(text);
+            } else {
+                queryResult.textContent = 'HTTP ' + response.status + ' ' + response.statusText + '\n' + text;
+            }
+        } catch (e) {
+            queryResult.textContent = String(e);
+        }
+    });
+
+    function renderQueryDocs(xmlText) {
+        const container = document.getElementById('queryDocs');
+        const xml = new DOMParser().parseFromString(xmlText, 'application/xml');
+        for (const extrinsicObject of xml.getElementsByTagNameNS('*', 'ExtrinsicObject')) {
+            const children = Array.from(extrinsicObject.children);
+            const title = children.find(c => c.localName === 'Name')
+                ?.firstElementChild?.getAttribute('value') || '';
+            const uriSlot = children.find(c => c.localName === 'Slot' && c.getAttribute('name') === 'URI');
+            const fileName = uriSlot?.getElementsByTagNameNS('*', 'Value')[0]?.textContent || '';
+            const uniqueId = children.find(c => c.localName === 'ExternalIdentifier'
+                && c.getAttribute('identificationScheme') === 'urn:uuid:2e82c1f6-a085-4c72-9da3-8640a32e42ab')
+                ?.getAttribute('value') || '';
+            const entryUuid = extrinsicObject.getAttribute('id') || '';
+
+            const div = document.createElement('div');
+            div.className = 'msg';
+            for (const [label, value] of [
+                ['Title', title],
+                ['Filename', fileName],
+                ['Document uniqueId', uniqueId],
+                ['Document entryUUID', entryUuid]
+            ]) {
+                const line = document.createElement('div');
+                const b = document.createElement('b');
+                b.textContent = label + ': ';
+                line.appendChild(b);
+                line.appendChild(document.createTextNode(value));
+                div.appendChild(line);
+            }
+            container.appendChild(div);
+        }
+    }
+
+    document.getElementById('downloadForm').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const downloadResult = document.getElementById('downloadResult');
+        downloadResult.className = 'result';
+        downloadResult.textContent = 'Downloading...';
+        downloadResult.style.display = 'block';
+
+        const uniqueId = document.getElementById('uniqueId').value.trim();
+        const saveFileName = document.getElementById('saveFileName').value.trim();
+
+        try {
+            const response = await fetch(getServerUrl() + '/xds-document/download/' + encodeURIComponent(uniqueId) + '?kvnr=' + getKvnr(), {
+                headers: Object.assign({ 'Accept': 'application/xml' }, getPoppHeader())
+            });
+            const text = await response.text();
+            if (!response.ok) {
+                downloadResult.className = 'result error';
+                downloadResult.textContent = 'HTTP ' + response.status + ' ' + response.statusText + '\n' + text;
+                return;
+            }
+
+            const xml = new DOMParser().parseFromString(text, 'application/xml');
+            const documentElement = xml.getElementsByTagNameNS('*', 'Document')[0];
+            if (!documentElement) {
+                downloadResult.className = 'result error';
+                downloadResult.textContent = text;
+                return;
+            }
+            const mimeType = xml.getElementsByTagNameNS('*', 'mimeType')[0]?.textContent || 'application/octet-stream';
+            const binary = atob(documentElement.textContent.trim());
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+            const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = saveFileName;
+            link.click();
+            URL.revokeObjectURL(url);
+
+            downloadResult.className = 'result ok';
+            downloadResult.textContent = 'Downloaded ' + saveFileName + ' (' + bytes.length + ' bytes, ' + mimeType + ')';
+        } catch (e) {
+            downloadResult.className = 'result error';
+            downloadResult.textContent = String(e);
+        }
+    });
+
+    document.getElementById('deleteForm').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const deleteResult = document.getElementById('deleteResult');
+        deleteResult.className = 'result';
+        deleteResult.textContent = 'Deleting...';
+        deleteResult.style.display = 'block';
+
+        const entryUuid = document.getElementById('entryUuid').value.trim();
+        const body =
+            '<ns4:RemoveObjectsRequest xmlns="urn:oasis:names:tc:ebxml-regrep:xsd:rim:3.0"' +
+            ' xmlns:ns4="urn:oasis:names:tc:ebxml-regrep:xsd:lcm:3.0">' +
+            '<ObjectRefList>' +
+            '<ObjectRef id="' + entryUuid.replaceAll('"', '&quot;').replaceAll('<', '&lt;') + '"/>' +
+            '</ObjectRefList>' +
+            '</ns4:RemoveObjectsRequest>';
+
+        try {
+            const response = await fetch(getServerUrl() + '/xds-document/delete/raw?kvnr=' + getKvnr(), {
+                method: 'POST',
+                headers: Object.assign({ 'Content-Type': 'application/xml' }, getPoppHeader()),
+                body: body
+            });
+            const text = await response.text();
+            if (response.ok) {
+                deleteResult.className = 'result ok';
+                deleteResult.textContent = 'Delete accepted. Task ID: ' + text;
+            } else {
+                deleteResult.className = 'result error';
+                deleteResult.textContent = 'HTTP ' + response.status + ' ' + response.statusText + '\n' + text;
+            }
+        } catch (e) {
+            deleteResult.className = 'result error';
+            deleteResult.textContent = String(e);
+        }
+    });
+
+    const CAMERA_BASE = 'http://127.0.0.1:8000';
+    const scanStatus = document.getElementById('scanStatus');
+    const previewImg = document.getElementById('previewImg');
+    const captureImg = document.getElementById('captureImg');
+    const scanUploadBtn = document.getElementById('scanUploadBtn');
+    let capturedBlob = null;
+
+    async function pollPreview() {
+        try {
+            const res = await fetch(CAMERA_BASE + '/preview.jpg');
+            if (res.ok) {
+                const blob = await res.blob();
+                if (previewImg.src) URL.revokeObjectURL(previewImg.src);
+                previewImg.src = URL.createObjectURL(blob);
+            }
+        } catch {
+            // server unreachable — just try again on the next tick
+        }
+        setTimeout(pollPreview, 50);
+    }
+    pollPreview();
+
+    document.getElementById('captureBtn').addEventListener('click', async () => {
+        scanStatus.textContent = 'capturing…';
+        try {
+            const res = await fetch(CAMERA_BASE + '/capture');
+            if (!res.ok) throw new Error(await res.text());
+            capturedBlob = await res.blob();
+            if (captureImg.src) URL.revokeObjectURL(captureImg.src);
+            captureImg.src = URL.createObjectURL(capturedBlob);
+            scanUploadBtn.disabled = false;
+            scanStatus.textContent = 'capture ok (' + Math.round(capturedBlob.size / 1024) + ' KB)';
+        } catch (err) {
+            scanStatus.textContent = 'capture failed: ' + err.message;
+        }
+    });
+
+    scanUploadBtn.addEventListener('click', async () => {
+        const scanResult = document.getElementById('scanResult');
+        scanResult.className = 'result';
+        scanResult.textContent = 'Creating PDF...';
+        scanResult.style.display = 'block';
+
+        try {
+            const pdfResponse = await fetch(CAMERA_BASE + '/capture.pdf');
+            if (!pdfResponse.ok) {
+                scanResult.className = 'result error';
+                scanResult.textContent = 'HTTP ' + pdfResponse.status + ' ' + pdfResponse.statusText + '\n' + await pdfResponse.text();
+                return;
+            }
+            const pdfBlob = await pdfResponse.blob();
+
+            scanResult.textContent = 'Uploading...';
+            const response = await fetch(getServerUrl() + '/xds-document/upload?kvnr=' + getKvnr(), {
+                method: 'POST',
+                headers: Object.assign({
+                    'Content-Type': 'application/pdf',
+                    'Lang-Code': 'de-DE',
+                    'File-Name': document.getElementById('fileName').value.trim(),
+                    'Title': document.getElementById('title').value.trim()
+                }, getPoppHeader()),
+                body: pdfBlob
+            });
+            const text = await response.text();
+            if (response.ok) {
+                scanResult.className = 'result ok';
+                scanResult.textContent = 'Upload accepted. Task ID: ' + text;
+            } else {
+                scanResult.className = 'result error';
+                scanResult.textContent = 'HTTP ' + response.status + ' ' + response.statusText + '\n' + text;
+            }
+        } catch (e) {
+            scanResult.className = 'result error';
+            scanResult.textContent = String(e);
+        }
+    });
+
+    const params = new URLSearchParams(location.search);
+    if (params.get('topic')) document.getElementById('topic').value = params.get('topic');
+
+    const flow = [];
+    document.getElementById('download').onclick = () => {
+        const blob = new Blob([JSON.stringify(flow, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'popp-flow-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json';
+        a.click();
+        URL.revokeObjectURL(a.href);
+    };
+
+    let stompClient;
+    document.getElementById('connect').onclick = () => {
+        if (stompClient) stompClient.deactivate();
+        const topic = document.getElementById('topic').value.trim();
+
+        stompClient = new StompJs.Client({
+            brokerURL: document.getElementById('poppClientUrl').value.trim(),
+        });
+        stompClient.onConnect = () => {
+            document.getElementById('poppStatus').textContent = 'subscribed to ' + topic;
+            stompClient.subscribe(topic, (msg) => {
+                const m = JSON.parse(msg.body);
+                flow.push({ receivedAt: new Date().toISOString(), topic: topic, message: m });
+                document.getElementById('download').disabled = false;
+                let kind;
+                if (m.cetpXml) {
+                    kind = 'CETP Event';
+                } else if (m.poppToken) {
+                    kind = 'PoPP Token';
+                } else if (m.readVSDResponseXml) {
+                    kind = 'ReadVSDResponse';
+                } else {
+                    kind = 'Unknown';
+                }
+                const div = document.createElement('div');
+                div.className = 'msg';
+                div.innerHTML =
+                    '<b>' + new Date().toLocaleTimeString() + '</b>' +
+                    ' &mdash; <b>' + kind + '</b>' +
+                    "<pre class='token'></pre>";
+                div.querySelector('.token').textContent = JSON.stringify(m, null, 2);
+                document.getElementById('messages').prepend(div);
+            });
+        };
+        stompClient.onWebSocketClose = () => {
+            document.getElementById('poppStatus').textContent = 'disconnected';
+        };
+        stompClient.activate();
+    };
+</script>
+</body>
+</html>
