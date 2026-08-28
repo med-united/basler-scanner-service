@@ -46,6 +46,15 @@ if (-not $uvCommand) {
 $uv = $uvCommand.Source
 Write-Host "uv: $uv" -ForegroundColor Green
 
+# uvw.exe is uv's windowless variant. The task runs it so that the service
+# starts without a console window.
+$uvwCommand = Get-Command uvw -ErrorAction SilentlyContinue
+if (-not $uvwCommand) {
+    throw "uvw is not on PATH. Open a new PowerShell window and run this script again."
+}
+$uvw = $uvwCommand.Source
+Write-Host "uvw: $uvw" -ForegroundColor Green
+
 # 2. The service is a single file, so there is nothing else to fetch.
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 $script = Join-Path $InstallDir "scanner.py"
@@ -60,12 +69,14 @@ Write-Host "Creating the Python environment (downloads CPython 3.13 once)..."
 if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
     Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 }
-$action = New-ScheduledTaskAction -Execute $uv `
+$action = New-ScheduledTaskAction -Execute $uvw `
                                   -Argument "run `"$script`" $Port" `
                                   -WorkingDirectory $InstallDir
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+# Give the USB camera time to enumerate before the first start attempt.
+$trigger.Delay = "PT10S"
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
-                                        -LogonType S4U -RunLevel Limited
+                                        -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
                                          -DontStopIfGoingOnBatteries `
                                          -ExecutionTimeLimit ([TimeSpan]::Zero) `

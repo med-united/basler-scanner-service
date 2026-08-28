@@ -36,9 +36,9 @@ yourself and store the settings in the camera:
    settings.
 
 Only one process can open the camera at a time, so the service and pylon Viewer
-can never run together. Once installed the service holds the camera
-permanently, and pylon Viewer will fail to open it. Release it for the duration
-of the configuration:
+can never run together. Once installed the service holds the camera for as long
+as you are logged in, and pylon Viewer will fail to open it. Release it for the
+duration of the configuration:
 
 ```powershell
 Stop-ScheduledTask -TaskName "Basler Scanner"    # release the camera
